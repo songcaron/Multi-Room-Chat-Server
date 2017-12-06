@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+
+    <title> Chatroom </title>
+
+    <link rel="stylesheet" href="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/themes/smoothness/jquery-ui.css">
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.1.1/jquery.min.js"></script>
+    <script src="https://ajax.googleapis.com/ajax/libs/jqueryui/1.12.1/jquery-ui.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script type="text/javascript">
+        var socketio = io.connect();
+        var nickname = null;
+        var clientId = null;
+        var nicknames = [];
+        var createdRooms = []; //if you created a room
+        var currentRoom = null;
+        var allRooms = [{name:'main',password: ''}]; //main chatroom will always be there
+        var bannedUsers = {};
+
+        socketio.on("message_to_client", function(data) {
+            console.log("About to emit a message");
+            var string = data.username + ": " + data.message;
+            document.getElementById("chatlog").appendChild(document.createElement("hr"));
+            document.getElementById("chatlog").appendChild(document.createTextNode(string));
+        });
+
+        socketio.on("updatelog", function(nickname, data) {
+            //updates the chat log
+            var string = nickname + "    " + data;
+            document.getElementById("chatlog").appendChild(document.createElement("hr"));
+            document.getElementById("chatlog").appendChild(document.createTextNode(string));
+        });
+
+        socketio.on("updateRooms", function(data) {
+            //updates list of available chat rooms after one is added
+            createdRooms = data.rooms;
+            var list = ' ';
+            for (var i in createdRooms) {
+                //Onclick, prompt the user to enter the password
+                list += '<div><ul onclick="switchRoom(\'' + createdRooms[i].name + '\')">' + createdRooms[i].name + '</ul>' + '</div>';
+                console.log(createdRooms[i].name);
+            }
+            var str = "Chat Rooms :<br>" + list;
+            document.getElementById("rooms").innerHTML = str;
+        });
+
+
+        socketio.on("updateUsers", function(data) {
+            //update list of users in the current chatroom
+            var list = ' ';
+
+            console.log("I have been called");
+
+            for (var i = 0; i < data['users'].length; i++) {
+                list += '<div><a href="#" onclick="message(\'' + data['users'][i] + '\')">' + data['users'][i] + '</a>' + '</div>';
+                console.log(data['users'][i]);
+            }
+
+            var str = "Users in this chat room: " + list;
+            document.getElementById("inroom").innerHTML = str;
+        });
+
+
+        <!-- socketio.on("changeRoom", function(room, password) { -->
+            <!-- //Ban check -->
+            <!-- if (bannedUsers[room] == nickname) { -->
+                <!-- console.log("Sorry, you are banned from joining this chat room."); -->
+            <!-- } -->
+            <!-- //Not password protected -->
+            <!-- else if (password == "") { -->
+                <!-- currentRoom = room; -->
+                <!-- socketio.emit("changeRoom", currentRoom); -->
+            <!-- } -->
+            <!-- //Password Protected -->
+            <!-- else { -->
+                <!-- var privateroom = prompt("Please enter the password to this room"); -->
+                <!-- if (privateroom == password) { -->
+                    <!-- currentRoom = room; -->
+                    <!-- socketio.emit("changeRoom", currentRoom); -->
+                <!-- } else { -->
+                    <!-- console.log("Sorry, incorrect password."); -->
+                <!-- } -->
+            <!-- } -->
+        <!-- }); -->
+
+        socketio.on("privateMessage", function(target, msg, sender) {
+            //Private message callback
+            if (target == nickname) {
+                document.getElementById("chatlog").appendChild(document.createElement("hr"));
+                //Make private message color blue to distinguish easier
+                $('#chatlog').append('<div style="color:blur;">' + sender + ": " + msg + '</div>');
+            }
+        });
+
+        socketio.on("kickOut", function(target) {
+            //Redirect to lobby
+            if (nickname == target) {
+                socketio.emit("switchRoom", "lobby");
+            }
+        });
+
+        socketio.on("banFrom", function(target, room) {
+            bannedUsers[room].push(target);
+            
+			//Redirect to lobby
+            if (nickname == target) {
+                socketio.emit("switchRoom", "lobby");
+            }
+        });
+
+		socketio.on('loginSucess', function(data) {
+			nickname = data.username;
+			currentRoom = 'main'
+			clientId = data.user_id;
+
+			console.log("My username is: " + nickname);
+			$(".chat").show(1000);
+			$("#sign_in").hide(1000);
+        });
+		
+		
+        function sendMessage() {
+            //Send message
+
+
+            var msg = document.getElementById("message_input").value;
+            socketio.emit("message_to_server", {
+                message: msg,
+                room: currentRoom,
+                username: nickname
+            });
+        }
+
+        function addRoom() {
+            //Create a new chat room
+            var room = document.getElementById("newChatName").value;
+            var pass = document.getElementById("chatPassword").value;
+
+			createdRooms.push(room);
+
+            allRooms[room] = pass;
+			
+            //Assign ownership
+            socketio.emit('joinRoom', {
+                room: room,
+                currentRoom: currentRoom,
+                password: pass,
+            });
+			
+			currentRoom = room;
+			socketio.emit("updateRooms",{});
+            $("#addChatDialog").dialog('close');
+        }
+		
+		function enterChat() {
+            var room = document.getElementById("enterChatName").value;
+            var pass = document.getElementById("enterChatPassword").value;
+			
+            //Assign ownership
+            socketio.emit('joinRoom', {
+                room: room,
+                currentRoom: currentRoom,
+                password: pass,
+            });
+			
+			
+			currentRoom = room;
+			//socketio.emit("updateRooms",{});
+            $("#enterChatDialog").dialog('close');
+        }
+
+		
+        function message(user) {
+            //Private msg
+            var msg = prompt("Please enter your private message:");
+            var target = user;
+            var sender = nickname;
+            socketio.emit('privateMsg', target, msg, sender);
+        }
+
+        function kickUser() {
+            //Kick function that gets the target and source
+            var user = document.getElementById("kickout").value;
+            var source = nickname;
+            var target = user;
+			
+			//make sure person is admin first
+			if($.inArray(currentRoom,createdRooms) != -1) {
+				socketio.emit('kickout', {user: target, room: currentRoom}); 
+			}
+        }
+
+        function banUser() {
+            //Ban function that gets the target and source
+            var user = document.getElementById("ban").value;
+            var source = nickname;
+            var target = user;
+            socketio.emit('ban', target, source);
+        }
+
+        function grantOwnership() {
+            //Allows users to change ownership of a chat room
+            var target = document.getElementById("grantowner").value;
+            var source = nickname;
+            socketio.emit('grantowner', target, source);
+        }
+
+        function login() {
+            var name = document.getElementById("username").value;
+            socketio.emit('login', {
+                username: name
+            });
+        }
+    </script>
+</head>
+
+<body>
+
+    <div id="sign_in">
+        Create username: <br>
+        <input id="username" type="text">
+        <button onclick="login()">Enter</button>
+    </div>
+
+    <!-- <div style="float:right" id="rooms" class="chat"> -->
+    <!-- <input type="text" id="room_input" /> -->
+    <!-- <button onclick="addRoom()">New Chat Room </button> -->
+    <!-- </div> -->
+
+    <div id="kickandban" class="chat">
+
+        <input type="text" id="kickout" />
+        <button id="kickbutton" onClick="kickUser()">Kick Out</button>
+        <input type="text" id="ban" />
+        <button id="banbutton" onClick="banUser()">Ban</button>
+        <input type="text" id="grantowner" />
+        <button id="grantbutton" onClick="grantOwnership()">Give Owrnership</button>
+    </div>
+
+    <div style="width: 100%;">
+        <div style="float:left" id="rooms" class="chat"></div>
+        <div style="float:left" id="inroom" class="chat"></div><br>
+
+        <div style="float:left">
+            <div id="chatlog" class="chat"></div>
+
+            <div id="messagethings" class="chat">
+                <input type="text" id="message_input"><button id="sendMessage" onclick="sendMessage()">Send</button>
+            </div>
+        </div>
+    </div>
+
+    <button id="openChatDialog" class="chat" type="submit">New Chat Room</button>
+    <button id="enterChat" class="chat" type="submit">Enter Chat Room</button>
+
+    <div id="addChatDialog" class="dialog">
+        Name: <input id="newChatName" type="text"><br> Password: <input id="chatPassword" type="password" placeholder="leave blank if not needed"><br>
+        <button type="submit" onclick="addRoom()">Create Chat</button>
+    </div>
+	
+	<div id="enterChatDialog" class="dialog">
+		Name: <input id="enterChatName" type="text"><br> Password: <input id="enterChatPassword" type="password" placeholder="leave blank if not needed"><br>
+		<button type="submit" onclick="enterChat()">Enter Chat</button>
+	</div>
+	
+    <script>
+        //hide items unti user signs in
+        $(".chat").hide();
+        $("#sign_in").show();
+        $(".dialog").hide();
+
+        $("#addChatDialog").dialog({
+            title: 'Create Chat',
+            autoOpen: false,
+            draggable: true,
+            resizable: true,
+            width: 400
+        });
+		
+		$("#enterChatDialog").dialog({
+            title: 'Create Chat',
+            autoOpen: false,
+            draggable: true,
+            resizable: true,
+            width: 400
+        });
+
+        $("#openChatDialog").click(function() {
+            $("#addChatDialog").dialog('open');
+        });
+		
+		$("#enterChat").click(function() {
+			$("#enterChatDialog").dialog('open');
+        });
+    </script>
+</body>
+
+</html>
